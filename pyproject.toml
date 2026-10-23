@@ -1,7 +1,7 @@
 [project]
 name = "video-grep-cli"
 version = "0.1.0"
-description = "grep for video: search footage in plain English from the terminal, over SSH, on servers and headless boxes"
+description = "grep for video content: describe an action or scene and find the moment it happens, from the terminal, over SSH, on servers and headless boxes"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

@@ -1,7 +1,13 @@
 # video-grep-cli
 
-**Search videos in plain English, straight from the terminal.** No monitor, no video player,
-no downloading footage to scrub through it by hand.
+**Find the moment inside your videos by describing what happens in it, straight from the terminal.**
+
+Type an action, scene or situation, such as *"person climbing over the fence"*, *"forklift reversing near the
+dock"* or *"kid jumping on the bed"*. `video-grep` looks at the actual frames and returns the videos
+where it happens, with the timestamp. It's not a file name or metadata search: your files can be called
+`IMG_4521.mov` or `cam2_2300.mp4` and it still works.
+
+No monitor, no video player, no downloading footage to scrub through it by hand.
 
 ```
 search> person walking near the gate at night
@@ -13,7 +19,7 @@ search> person walking near the gate at night
 
   Type a number (1-3) to see its full path and a command to save that clip, or type a new search.
 ```
-<sub>Illustrative output. Results come from what is visible in the footage, not from file names.</sub>
+<sub>Illustrative output. The match comes from what happens on screen; the file names say nothing about it.</sub>
 
 ## The problem
 
@@ -30,14 +36,17 @@ and cloud services, not around an SSH session.
 
 ## What this does
 
-`video-grep` indexes a folder of videos **where they already are**, then lets you type what you're
-looking for, such as "forklift near the loading dock" or "dog chasing bubbles". You get the matching
-videos ranked, each with the moment it happens.
+`video-grep` goes through every video in a folder **where it already is**, sampling frames across
+each 6-second stretch, and builds a searchable index of what happens in it: objects, actions, scenes
+and settings. You then describe the
+moment you need, such as "forklift near the loading dock", "dog chasing bubbles" or "crowd waving glow
+sticks at a concert". You get the videos where that happens, ranked, each with the exact moment.
 
 - **Terminal-first.** Works fully over SSH. On a headless machine, picking a result prints the
   file path, the time range, and a ready-to-run `ffmpeg` command that saves just that clip, so you
   copy a few MB instead of the whole recording.
-- **Plain-English search over what's on screen.** No tags, file names or manual labelling needed.
+- **Searches the content, not the file names.** Describe actions, activities, scenes or objects in
+  plain English. No tags, captions, metadata or manual labelling needed.
 - **Local and private.** After a one-time model download, everything runs offline on the machine.
   No video, frame or query leaves it.
 - **Incremental.** Re-running only processes new or changed videos.
