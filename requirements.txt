@@ -1,0 +1,9 @@
+# Versions tested together on macOS (Apple Silicon), Python 3.12.
+sentence-transformers==6.2.0
+transformers==5.20.2
+torch==2.14.1
+torchvision==0.29.1
+numpy==2.5.4
+tqdm==4.70.1
+# Medium/Small model sizes. On Linux with an NVIDIA GPU, install onnxruntime-gpu instead.
+onnxruntime==1.31.0

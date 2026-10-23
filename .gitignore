@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+
+# Search indexes created inside searched folders
+.video-grep/
+
+# Never commit media or model weights
+*.mp4
+*.mov
+*.m4v
+*.mkv
+*.webm
+*.avi
+*.ogv
+*.npy
+*.onnx
+*.onnx_data
+*.safetensors
+*.gguf

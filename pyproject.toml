@@ -1,0 +1,30 @@
+[project]
+name = "video-grep-cli"
+version = "0.1.0"
+description = "grep for video: search footage in plain English from the terminal, over SSH, on servers and headless boxes"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "madhusoodhans", email = "20991627+madhusoodhans@users.noreply.github.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=2.0",
+    "onnxruntime>=1.20",
+    "sentence-transformers>=6.2.0",
+    "torch>=2.14",
+    "torchvision>=0.29",
+    "tqdm>=4.66",
+    "transformers>=5.20",
+]
+
+[project.scripts]
+video-grep = "video_grep.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
