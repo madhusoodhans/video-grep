@@ -1,4 +1,4 @@
-# video-grep-cli
+# video-grep
 
 **Find the moment inside your videos by describing what happens in it, straight from the terminal.**
 
@@ -62,8 +62,8 @@ Requires Python 3.10+ and ffmpeg.
 
 ```bash
 # macOS: brew install python ffmpeg      Ubuntu/Debian: sudo apt install python3-venv ffmpeg
-git clone https://github.com/madhusoodhans/video-grep-cli.git
-cd video-grep-cli
+git clone https://github.com/madhusoodhans/video-grep.git
+cd video-grep
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -e .
