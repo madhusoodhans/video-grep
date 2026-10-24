@@ -1,5 +1,11 @@
 # video-grep
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Local](https://img.shields.io/badge/runs-100%25%20local-success)
+![Terminal](https://img.shields.io/badge/interface-terminal%20%2F%20SSH-black?logo=gnubash&logoColor=white)
+
 **Find the moment inside your videos by describing what happens in it, straight from the terminal.**
 
 Type an action, scene or situation, such as *"person climbing over the fence"*, *"forklift reversing near the
