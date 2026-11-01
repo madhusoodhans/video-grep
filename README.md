@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-3776AB?logo=python&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 ![Local](https://img.shields.io/badge/runs-100%25%20local-success)
 ![Terminal](https://img.shields.io/badge/interface-terminal%20%2F%20SSH-black?logo=gnubash&logoColor=white)
 
