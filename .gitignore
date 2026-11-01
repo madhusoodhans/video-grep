@@ -7,6 +7,8 @@ wheels/
 *.egg-info
 .venv
 
+.DS_Store
+
 # Search indexes created inside searched folders
 .video-grep/
 

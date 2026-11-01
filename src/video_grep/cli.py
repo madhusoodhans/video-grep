@@ -44,11 +44,13 @@ def has_display() -> bool:
 
 def show_details(path: Path, start: float, end: float):
     """Terminal-only result: where the video is, when it happens, and how to save just that part."""
-    out = f"{path.stem}_at_{fmt_time(start).replace(':', '-')}{path.suffix}"
-    cmd = ["ffmpeg", "-ss", f"{start:g}", "-i", str(path), "-t", f"{end - start:g}", "-c", "copy", out]
+    # "./" stops ffmpeg reading a name like "-dash.mp4" as an option or "cam1:23.mp4" as a protocol.
+    out = f"./{path.stem}_at_{fmt_time(start).replace(':', '-')}{path.suffix}"
+    cut = ["ffmpeg", "-ss", f"{start:g}", "-i", str(path), "-t", f"{end - start:g}"]
     print(f"  File:   {path}")
     print(f"  Moment: {fmt_time(start)} - {fmt_time(end)}")
-    print(f"  Save just this part (a few MB instead of the whole video):\n    {shlex.join(cmd)}\n")
+    print(f"  Save just this part, fast (the cut may start a little early):\n    {shlex.join(cut + ['-c', 'copy', out])}")
+    print(f"  Exact cut, slower:\n    {shlex.join(cut + ['-an', out])}\n")
 
 
 def open_video(path: Path, start: float):
@@ -77,27 +79,40 @@ def open_video(path: Path, start: float):
     print(f"  Opened in your default player (QuickTime can't play this format); skip to {fmt_time(start)}.")
 
 
-def update_index(index, embedder, force: bool):
+def update_index(index, embedder, args):
+    damaged = index.verify()
+    if damaged:
+        print(f"{damaged} video(s) had damaged index data and will be indexed again.")
     status = index.status()
     if status.rebuild:
         print("Model or settings changed since last index; re-indexing everything.")
-    todo = len(status.pending) + (status.unchanged if force else 0)
-    if not todo and not status.removed:
-        return
-    if force:
-        print(f"Re-indexing all {todo} video(s).")
-    else:
-        print(f"Updating index: {len(status.new)} new, {len(status.changed)} changed, "
-              f"{len(status.removed)} removed video(s).")
-    if todo:
-        print("This can take a while for big folders. Progress is saved as it goes;\n"
-              "press Ctrl+C to stop and run again later to continue.\n")
-    t = time.time()
-    stats = index.update(embedder, force=force)
-    if todo:
-        print(f"Indexed {stats['indexed']} video(s) in {time.time() - t:.0f}s.")
-    for rel, err in stats["failed"]:
-        print(f"  Could not read {rel}: {err}")
+    retry = status.failed if args.retry_failed else []
+    todo = len(status.pending) + len(retry) + (status.unchanged if args.reindex else 0)
+    if todo or status.removed:
+        if args.reindex:
+            print(f"Re-indexing all {todo} video(s).")
+        else:
+            print(f"Updating index: {len(status.new)} new, {len(status.changed)} changed, "
+                  f"{len(status.partial)} unfinished, {len(retry)} to retry, {len(status.removed)} removed video(s).")
+        if todo:
+            print("This can take a while for big folders. Progress is saved as it goes; press Ctrl+C\n"
+                  "to stop and run again later to continue. Over SSH, run this inside tmux or screen.\n")
+        t = time.time()
+        stats = index.update(embedder, force=args.reindex, retry_failed=args.retry_failed, prune=args.prune)
+        if todo:
+            print(f"Indexed {stats['indexed']} video(s) in {time.time() - t:.0f}s.")
+        for rel, warning in stats["warnings"]:
+            print(f"  Warning for {rel}: {warning}")
+        if stats["kept_missing"]:
+            print(f"  {stats['kept_missing']} indexed video(s) are missing. Their index data was kept in case a\n"
+                  "  disk is unmounted. If they were really deleted, run again with --prune.")
+    failed = {rel: entry["error"] for rel, entry in index.files.items() if "error" in entry}
+    if failed:
+        print(f"\n{len(failed)} video(s) could not be read and aren't searchable (--retry-failed tries again):")
+        for rel, err in list(failed.items())[:5]:
+            print(f"  {rel}: {err}")
+        if len(failed) > 5:
+            print(f"  ... and {len(failed) - 5} more")
 
 
 def print_results(query: str, results):
@@ -126,8 +141,10 @@ def main():
     p.add_argument("folder", help="folder containing your videos (searched recursively)")
     p.add_argument("-k", type=int, default=5, help="max results to show (default 5)")
     p.add_argument("--reindex", action="store_true", help="re-index every video from scratch")
+    p.add_argument("--retry-failed", action="store_true", help="try again on videos that could not be read")
+    p.add_argument("--prune", action="store_true", help="drop index data for missing videos, even if many are missing")
     p.add_argument("--model-size", choices=list(SIZES),
-                   help="switch model size (default: the one chosen on first run). "
+                   help="use this model size for this run (default: the one chosen on first run). "
                         "Each size keeps its own index, so a new size indexes the folder once.")
     p.add_argument("--no-open", action="store_true",
                    help="never launch a video player; show path, time range and a save command instead "
@@ -139,6 +156,12 @@ def main():
     if not folder.is_dir():
         sys.exit(f"Not a folder: {args.folder}")
 
+    from .frames import missing_tools
+
+    if missing := missing_tools():
+        sys.exit(f"{' and '.join(missing)} not found. Install ffmpeg first "
+                 "(macOS: brew install ffmpeg, Ubuntu/Debian: sudo apt install ffmpeg).")
+
     from .embed import load_embedder
     from .index import VideoIndex
     from .models import ensure_model
@@ -148,10 +171,15 @@ def main():
     index = VideoIndex(folder, size.index_id, size.key)
     print(f"Loading {size.title} model ...", flush=True)
     embedder = load_embedder(size)
+    device = {"mps": "Apple GPU", "cuda": "NVIDIA GPU"}.get(embedder.device)
+    print(f"Running on {device}." if device else "Running on CPU: no usable GPU found, so indexing will be slow.")
     try:
-        update_index(index, embedder, args.reindex)
+        update_index(index, embedder, args)
     except KeyboardInterrupt:
-        sys.exit("\n\nStopped. Videos finished so far are saved; run again to continue indexing.")
+        sys.exit("\n\nStopped. Finished work is saved; run again to continue indexing.")
+    except (OSError, RuntimeError) as e:
+        sys.exit(f"\n\nIndexing stopped: {e}\n"
+                 "No video was marked as failed. Fix the problem and run again to continue.")
 
     searcher = Searcher(*index.load())
     n = sum(1 for e in index.files.values() if "vectors" in e)
@@ -181,6 +209,7 @@ def main():
                 if OPEN_VIDEOS:
                     print(f"  Opening {r.video} at {fmt_time(r.start)} ...\n")
                     open_video(index.folder / r.video, r.start)
+                    print(f"  File: {index.folder / r.video}\n")
                 else:
                     show_details(index.folder / r.video, r.start, r.end)
             else:

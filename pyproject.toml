@@ -19,6 +19,9 @@ dependencies = [
     "transformers>=5.20",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [project.scripts]
 video-grep = "video_grep.cli:main"
 
