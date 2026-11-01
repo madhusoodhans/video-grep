@@ -19,9 +19,9 @@ No monitor, no video player, no downloading footage to scrub through it by hand.
 search> person walking near the gate at night
 
   Top 3 matches for "person walking near the gate at night":
-    1. cam2/2026-10-21_2300.mp4  (best moment at 14:36)
-    2. cam2/2026-10-20_2300.mp4  (best moment at 3:12)
-    3. cam1/2026-10-21_2300.mp4  (best moment at 41:05)
+    1. cam2/2026-10-21_2300.mp4  (at 14:36, strong match, 0.74)
+    2. cam2/2026-10-20_2300.mp4  (at 3:12, strong match, 0.71)
+    3. cam1/2026-10-21_2300.mp4  (at 41:05, possible match, 0.68)
 
   Type a number (1-3) to see its full path and a command to save that clip, or type a new search.
 ```
@@ -49,9 +49,12 @@ moment you need, such as "forklift near the loading dock", "dog chasing bubbles"
 sticks at a concert". You get the videos where that happens, ranked, each with the exact moment.
 
 - **Terminal-first.** Built for SSH sessions. On a headless machine, picking a result prints the
-  file path, the time range, and a ready-to-run `ffmpeg` command that saves just that clip, so you
-  can usually copy a few MB instead of the whole recording. Run long indexing inside `tmux` or
-  `screen`: a dropped SSH session stops it.
+  file path, the time range, and ready-to-run `ffmpeg` commands that save just that clip, so you
+  can usually copy a few MB instead of the whole recording.
+- **Works with read-only footage.** If the folder can't be written to, the index is kept elsewhere.
+- **Handles long recordings.** One file can return several separate moments, and indexing saves
+  progress every 30 minutes of footage. Run it inside `tmux` or `screen` over SSH: a dropped session
+  stops indexing, and the next run continues from the last save.
 - **Searches the content, not the file names.** Describe actions, activities, scenes or objects in
   plain English. No tags, captions, metadata or manual labelling needed.
 - **Local and private.** After a one-time model download, everything runs offline on the machine.
@@ -68,6 +71,7 @@ in QuickTime on macOS. On Linux it opens in the default player and you skip to t
 
 Requires ffmpeg and Python 3.12, 3.13 or 3.14 (not 3.14.1). Check with `python3 --version`: Ubuntu
 22.04, Debian 12 and JetPack 6 ship older versions, so you need to install a newer Python there first.
+PyTorch has no builds for Intel Macs or 32-bit Raspberry Pi OS.
 
 ```bash
 # macOS: brew install python ffmpeg      Ubuntu/Debian: sudo apt install python3-venv ffmpeg
@@ -80,10 +84,19 @@ pip install -r requirements.txt -e .
 video-grep /path/to/videos
 ```
 
-On first run you choose a model size (Enter = **High**, recommended). It downloads once with a
-progress bar, then the folder is indexed:
+**On Linux without an NVIDIA GPU**, install the CPU build of PyTorch first to avoid about 2.7 GB of
+NVIDIA packages. Run this before the `pip install -r` line above (not yet tested):
+
+```bash
+pip install torch==2.14.1 torchvision==0.29.1 --index-url https://download.pytorch.org/whl/cpu
+```
+
+On first run you see what hardware was found and choose a model size; Enter picks the one recommended
+for your machine. It downloads once with a progress bar, then the folder is indexed:
 
 ```
+This machine: GPU found, 24 GB RAM.
+
 Choose a model size to download (needed once):
 
   1. High    ~ 1.5 GB   best quality, fastest (uses your GPU)  (recommended)
@@ -94,17 +107,23 @@ Choose a model size to download (needed once):
   Indexing    |█████████████▊                |  46%  01:24 elapsed, ~01:35 left  video 11/26: clip_15.mov
 ```
 
-Indexing progress is saved after every video, so Ctrl+C is safe: the next run continues, restarting
-only the video that was in progress.
+Progress is saved after every video and every 30 minutes of footage, so Ctrl+C is safe: the next run
+continues, and the part already done is searchable in the meantime. Without a terminal (cron, `nohup`),
+the first run needs `--model-size`, so a large download never starts unasked.
 
 ## Usage
 
 ```bash
 video-grep FOLDER                       # index (if needed), then search interactively
-video-grep FOLDER --model-size small    # switch model size (each size keeps its own index)
+video-grep FOLDER --model-size small    # use another size for this run (each keeps its own index)
 video-grep FOLDER --no-open             # never launch a player (automatic over SSH / no display)
 video-grep FOLDER --reindex             # rebuild the index from scratch
 video-grep FOLDER -k 10                 # show up to 10 results
+video-grep FOLDER --per-video 1         # one moment per video (default: up to 3)
+video-grep FOLDER --min-score 0.62      # show less certain results too
+video-grep FOLDER --index-dir /some/dir # keep the index outside the video folder
+video-grep FOLDER --retry-failed        # try again on videos that could not be read
+video-grep FOLDER --prune               # drop index data for missing videos, even if many are gone
 ```
 
 Picking a result on a headless machine:
@@ -113,13 +132,23 @@ Picking a result on a headless machine:
 search> 1
   File:   /data/footage/cam2/2026-10-21_2300.mp4
   Moment: 14:36 - 14:42
-  Save just this part (a few MB instead of the whole video):
-    ffmpeg -ss 876 -i /data/footage/cam2/2026-10-21_2300.mp4 -t 6 -c copy 2026-10-21_2300_at_14-36.mp4
+  Save just this part, fast (the cut may start a little early):
+    ffmpeg -ss 876 -i /data/footage/cam2/2026-10-21_2300.mp4 -t 6 -c copy ./2026-10-21_2300_at_14-36.mp4
+  Exact cut, slower:
+    ffmpeg -ss 876 -i /data/footage/cam2/2026-10-21_2300.mp4 -t 6 -an ./2026-10-21_2300_at_14-36.mp4
 ```
 
-Results below a similarity of 0.62 are hidden, and if nothing passes you get `No matches found`.
-This filter is weak: **a search for something that isn't in your footage can still return results,
-so check a match before relying on it.** See [Limitations](#limitations).
+Each result shows how close the match is:
+
+| Label | Score | What it means in testing |
+|---|---|---|
+| **strong match** | 0.70 and up | None of 24 searches for absent subjects reached this |
+| **possible match** | 0.67 to 0.70 | Worth checking: 6 of 24 absent subjects reached this level |
+| hidden | below 0.67 | You see `No matches found` if nothing is left |
+
+Short or vague searches score lower, so "blue lights at a concert" works better than "blue light".
+`--min-score` changes the cut-off. These levels come from a small test set with the High model, so
+**check a match before relying on it**. See [Limitations](#limitations).
 
 ## Model sizes
 
@@ -153,8 +182,8 @@ Models are stored in `~/.cache/video-grep/models/` (override with `VIDEO_GREP_HO
    in the same vector space.
 3. Vectors are stored next to the footage in `FOLDER/.video-grep/<size>/`, about 17 KB per minute
    of video.
-4. A query is embedded the same way and compared to every clip (cosine similarity). Each video is
-   ranked by its best clip, which also gives the timestamp.
+4. A query is embedded the same way and compared to every clip (cosine similarity). The best
+   clips are returned as moments, up to 3 per video by default.
 
 Search is a brute-force dot product: ~25 ms for 30 videos on the test machine, and about 0.15 s for
 1.4 million clips in a synthetic test. Memory is the larger limit, because all vectors are loaded
@@ -183,21 +212,18 @@ folders with thousands of videos. Reports are welcome.
   minutes ("the car that parked and left later") are not understood as a whole.
 - **Generic concepts, not specific identities.** It finds "a red car", "a toddler on a bed", not
   "my car" or a particular person.
-- **False matches happen.** The 0.62 cut-off doesn't reliably reject searches for things that aren't
-  in your footage: in a test on 29 varied clips, most such queries still returned results. The 97%
-  figure above measures whether the right video ranks first when it exists, not whether the tool can
-  tell that something is absent. Don't treat a result, or its absence, as proof that an event did or
-  didn't happen.
-- **One moment per video.** Each file returns only its single best moment, so a long recording with
-  several matching events shows just one of them.
-- **Long recordings are not a good fit yet.** A video is saved only when it finishes, so stopping
-  or losing the session partway through a long file restarts that file.
-- **The index must live inside the video folder,** so read-only folders don't work yet.
-- **Some file types are skipped without warning,** including `.ts`, `.mpg`, `.flv` and `.dav`.
+- **False matches and misses happen.** The score levels were set on 29 varied clips with 58 queries
+  written while building this, and near-identical footage such as fixed CCTV angles may behave
+  differently. At the default cut-off, 6 of 24 searches for absent subjects still returned possible
+  matches. Don't treat a result, or its absence, as proof that an event did or didn't happen.
+- **Small people and objects can be missed.** Frames are reduced to 384 pixels wide before embedding,
+  so a distant person in a wide CCTV shot may be only a few pixels. Frames are also 0.75 s apart, so
+  very quick events can fall between them.
+- **Only known file extensions are read.** Most common video formats and DVR exports are covered.
 - **The first index is the slow part.** Fast on a GPU, but on a CPU it can take as long as the
   footage itself, or longer. CPU-only machines and small boards will be slow.
 - **Memory.** High on CPU peaked at about 7.3 GB of RAM and Small at about 3.3 GB, so High may not
-  fit on small boards. The first-run menu recommends High without checking for a GPU or RAM.
+  fit on small boards. The first-run menu takes this into account.
 - **Index updates at startup only.** Videos added while the search prompt is open are picked up on
   the next run.
 - **One-time internet access** is needed to download the model. Everything after that is offline.
@@ -218,6 +244,13 @@ python scripts/evaluate.py ../video-grep-testdata
 ```
 
 To evaluate your own videos, write a JSON file like `scripts/eval_queries.json` and pass `--queries`.
+
+To run the automated tests (they use small generated videos and need no model):
+
+```bash
+pip install -e '.[dev]'
+pytest
+```
 
 ## Credits
 

@@ -10,6 +10,7 @@ that clip.
 """
 
 import argparse
+import hashlib
 import os
 import shlex
 import subprocess
@@ -20,10 +21,12 @@ from pathlib import Path
 from .models import SIZES
 
 QUICKTIME_EXTS = {".mov", ".mp4", ".m4v"}
-# On the test set, specific queries scored 0.67-0.80 on the right video, short vague ones
-# ("blue light") ~0.65, and queries with no matching video topped out at 0.613.
-# Rough, model-specific cut-off; revisit with real home videos.
-MATCH_SCORE = 0.62
+# Measured with the High model on 29 varied clips, 34 queries for things present and 24 for
+# things absent. At 0.67 every present query matched and 18 of 24 absent ones were rejected;
+# at 0.70 all 24 absent ones were rejected but 7 present ones were lost. Scores shift by up
+# to ~0.014 on Small. These are starting points: re-measure on real footage.
+POSSIBLE_SCORE = 0.67
+STRONG_SCORE = 0.70
 OPEN_VIDEOS = True  # set in main(): False when headless or --no-open
 
 
@@ -115,15 +118,17 @@ def update_index(index, embedder, args):
             print(f"  ... and {len(failed) - 5} more")
 
 
-def print_results(query: str, results):
-    matches = [r for r in results if r.score >= MATCH_SCORE]
+def print_results(query: str, results, min_score: float):
+    matches = [r for r in results if r.score >= min_score]
     if not matches:
-        print(f'  No matches found for "{query}".\n')
+        print(f'  No matches found for "{query}". Try describing it in more detail, '
+              "or lower --min-score.\n")
         return []
     title = f"Top {len(matches)} matches" if len(matches) > 1 else "1 match"
     print(f'\n  {title} for "{query}":')
     for i, r in enumerate(matches, 1):
-        print(f"    {i}. {r.video}  (best moment at {fmt_time(r.start)})")
+        strength = "strong" if r.score >= STRONG_SCORE else "possible"
+        print(f"    {i}. {r.video}  (at {fmt_time(r.start)}, {strength} match, {r.score:.2f})")
     print(f"\n  {pick_hint(len(matches))}\n")
     return matches
 
@@ -134,12 +139,39 @@ def pick_hint(n: int) -> str:
     return f"Type {which} to {action}, or type a new search."
 
 
+def positive_int(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return n
+
+
+def index_root(folder: Path, override: str | None) -> Path | None:
+    """Where the index lives. None means the default, inside the video folder."""
+    if override:
+        return Path(override).expanduser()
+    if os.access(folder, os.W_OK):
+        return None
+    from .models import HOME
+
+    root = HOME / "indexes" / hashlib.sha1(str(folder.resolve()).encode()).hexdigest()[:16]
+    print(f"{folder} is read-only, so the index is kept in {root}")
+    return root
+
+
 def main():
     global OPEN_VIDEOS
     p = argparse.ArgumentParser(prog="video-grep",
                                 description="Search a folder of videos in plain English, from the terminal.")
     p.add_argument("folder", help="folder containing your videos (searched recursively)")
-    p.add_argument("-k", type=int, default=5, help="max results to show (default 5)")
+    p.add_argument("-k", type=positive_int, default=5, help="max results to show (default 5)")
+    p.add_argument("--per-video", type=positive_int, default=3,
+                   help="max separate moments to show from one video (default 3)")
+    p.add_argument("--min-score", type=float, default=POSSIBLE_SCORE,
+                   help=f"hide results scoring below this (default {POSSIBLE_SCORE}). Lower it to see more "
+                        "uncertain results; raise it to reduce false matches")
+    p.add_argument("--index-dir", help="keep the index here instead of inside the video folder "
+                                       "(automatic if the folder is read-only)")
     p.add_argument("--reindex", action="store_true", help="re-index every video from scratch")
     p.add_argument("--retry-failed", action="store_true", help="try again on videos that could not be read")
     p.add_argument("--prune", action="store_true", help="drop index data for missing videos, even if many are missing")
@@ -168,23 +200,24 @@ def main():
     from .search import Searcher
 
     size = ensure_model(args.model_size)
-    index = VideoIndex(folder, size.index_id, size.key)
+    index = VideoIndex(folder, size.index_id, size.key, index_root(folder, args.index_dir))
     print(f"Loading {size.title} model ...", flush=True)
     embedder = load_embedder(size)
     device = {"mps": "Apple GPU", "cuda": "NVIDIA GPU"}.get(embedder.device)
-    print(f"Running on {device}." if device else "Running on CPU: no usable GPU found, so indexing will be slow.")
+    print(f"Running on {device}." if device else "Running on CPU, so indexing will be slow.")
     try:
         update_index(index, embedder, args)
     except KeyboardInterrupt:
         sys.exit("\n\nStopped. Finished work is saved; run again to continue indexing.")
     except (OSError, RuntimeError) as e:
         sys.exit(f"\n\nIndexing stopped: {e}\n"
-                 "No video was marked as failed. Fix the problem and run again to continue.")
+                 "No video was marked as failed. Fix the problem and run again to continue.\n"
+                 "If the index location can't be written to, use --index-dir.")
 
     searcher = Searcher(*index.load())
     n = sum(1 for e in index.files.values() if "vectors" in e)
     if not n:
-        sys.exit(f"No videos found in {index.folder}")
+        sys.exit(f"No searchable videos in {index.folder}")
     print(f"\nReady to search {n} video(s) in {index.folder}")
     print("Type what you're looking for (e.g. \"dog playing in the snow\"), or 'q' to quit.\n")
 
@@ -215,7 +248,8 @@ def main():
             else:
                 print(f"  {pick_hint(len(results))}\n")
             continue
-        results = print_results(line, searcher.search(embedder.embed_query(line), k=args.k))
+        found = searcher.search(embedder.embed_query(line), k=args.k, per_video=args.per_video)
+        results = print_results(line, found, args.min_score)
 
 
 if __name__ == "__main__":
