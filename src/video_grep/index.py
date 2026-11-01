@@ -9,11 +9,13 @@ Long videos are checkpointed as they go, and a partly indexed video is searchabl
 """
 
 import fcntl
+import fnmatch
 import hashlib
 import json
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +30,7 @@ CHECKPOINT_CLIPS = 300  # save progress inside a video every 30 minutes of foota
 # Losing this much of the index at once looks like an unmounted disk, not deleted videos.
 MASS_REMOVAL_MIN = 5
 MASS_REMOVAL_SHARE = 0.25
+INDEX_BYTES_PER_SEC = 280  # measured: about 17 KB per minute of footage
 
 
 @dataclass
@@ -103,6 +106,19 @@ class VideoIndex:
                 raise RuntimeError("another video-grep is already indexing this folder") from None
             yield
 
+    def is_indexing(self) -> bool:
+        """True if another process, such as a background index, holds the lock."""
+        lock = self.dir / "lock"
+        if not lock.exists():
+            return False
+        with open(lock) as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(f, fcntl.LOCK_UN)
+        return False
+
     def status(self) -> Status:
         rebuild = self._incompatible() and bool(self.files)
         on_disk = {}
@@ -143,7 +159,27 @@ class VideoIndex:
             self._save()
         return len(bad)
 
-    def update(self, embedder, force: bool = False, retry_failed: bool = False, prune: bool = False) -> dict:
+    def plan(self, status: Status, force: bool = False, retry_failed: bool = False) -> list[str]:
+        """The videos an update would process."""
+        todo = set(status.pending)
+        if retry_failed:
+            todo |= set(status.failed)
+        if force:
+            todo |= set(self.files) - set(status.removed)
+        return sorted(todo)
+
+    def probe(self, videos: list[str]) -> dict[str, float | None]:
+        durations = {}
+        for rel in tqdm(videos, disable=len(videos) < 50, leave=False,
+                        bar_format="  Checking videos |{bar:30}| {n_fmt}/{total_fmt}"):
+            try:
+                durations[rel] = probe_duration(self.folder / rel)
+            except VideoError:
+                durations[rel] = None
+        return durations
+
+    def update(self, embedder, force: bool = False, retry_failed: bool = False, prune: bool = False,
+               durations: dict | None = None) -> dict:
         """Embed new/changed videos and drop removed ones. Returns counts.
 
         Only VideoError marks a file as failed. Anything else (disk full, out of memory)
@@ -151,9 +187,9 @@ class VideoIndex:
         """
         self.vec_dir.mkdir(parents=True, exist_ok=True)
         with self._locked():
-            return self._update(embedder, force, retry_failed, prune)
+            return self._update(embedder, force, retry_failed, prune, durations)
 
-    def _update(self, embedder, force, retry_failed, prune) -> dict:
+    def _update(self, embedder, force, retry_failed, prune, durations) -> dict:
         status = self.status()
         if status.rebuild:  # old vectors can't be compared with new ones, so never keep a mix
             for rel in list(self.files):
@@ -167,19 +203,8 @@ class VideoIndex:
         self.manifest.update(version=MANIFEST_VERSION, model=self.model_name, settings=SETTINGS)
         self._save()
 
-        todo = set(status.pending)
-        if retry_failed:
-            todo |= set(status.failed)
-        if force:
-            todo |= set(self.files) - set(status.removed)
-        todo = sorted(todo)
-
-        durations = {}
-        for rel in todo:
-            try:
-                durations[rel] = probe_duration(self.folder / rel)
-            except VideoError:
-                durations[rel] = None
+        todo = self.plan(status, force, retry_failed)
+        durations = durations if durations is not None else self.probe(todo)
 
         failed, warnings, gone = [], [], 0
         # Progress is measured in seconds of footage, so long videos move the bar proportionally.
@@ -191,7 +216,7 @@ class VideoIndex:
                 bar.set_description_str(f"video {i}/{len(todo)}: {Path(rel).name[-40:]}")
                 path = self.folder / rel
                 try:
-                    warning = self._index_file(rel, durations[rel], embedder, bar, force)
+                    warning = self._index_file(rel, durations.get(rel), embedder, bar, force)
                     if warning:
                         warnings.append((rel, warning))
                 except VideoError as e:
@@ -262,13 +287,36 @@ class VideoIndex:
         if entry and entry.get("vectors"):
             (self.vec_dir / entry["vectors"]).unlink(missing_ok=True)
 
-    def load(self) -> tuple[np.ndarray, list[tuple[str, float, float]]]:
-        """All clip vectors stacked into one matrix, plus (video, start, end) per row."""
-        mats, rows = [], []
+    def select(self, path: str | None = None, after: date | None = None, before: date | None = None) -> set[str]:
+        """Indexed videos in a subfolder or matching a pattern, and modified within the dates."""
+        chosen = set()
         for rel, entry in self.files.items():
             if "vectors" not in entry:
                 continue
-            mats.append(np.load(self.vec_dir / entry["vectors"]).astype(np.float32))
+            if path and not (rel.startswith(path.rstrip("/") + "/") or fnmatch.fnmatch(rel, path)):
+                continue
+            day = date.fromtimestamp(entry["mtime"])
+            if (after and day < after) or (before and day > before):
+                continue
+            chosen.add(rel)
+        return chosen
+
+    def load(self, videos: set[str] | None = None) -> tuple[np.ndarray, list[tuple[str, float, float]]]:
+        """Clip vectors stacked into one matrix, plus (video, start, end) per row.
+
+        Reads only: damaged entries are skipped here, and verify() repairs them.
+        """
+        mats, rows = [], []
+        for rel, entry in self.files.items():
+            if "vectors" not in entry or (videos is not None and rel not in videos):
+                continue
+            try:
+                vectors = np.load(self.vec_dir / entry["vectors"]).astype(np.float32)
+            except (OSError, ValueError, EOFError):
+                continue
+            if len(vectors) != len(entry["segments"]):
+                continue
+            mats.append(vectors)
             rows.extend((rel, s, e) for s, e in entry["segments"])
         if not mats:
             return np.zeros((0, 0), np.float32), []

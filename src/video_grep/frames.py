@@ -92,3 +92,47 @@ def iter_clips(path: Path, window_sec: float, frames_per_clip: int, size: int,
         proc.stdout.close()
         proc.kill()
         proc.wait()
+
+
+def parse_time(text: str) -> float:
+    """Seconds from "876", "14:36" or "1:02:03"."""
+    try:
+        parts = [float(part) for part in text.split(":")]
+    except ValueError:
+        raise ValueError(f"not a time: {text}") from None
+    if len(parts) > 3 or any(part < 0 for part in parts):
+        raise ValueError(f"not a time: {text}")
+    seconds = 0.0
+    for part in parts:
+        seconds = seconds * 60 + part
+    return seconds
+
+
+def clip_filename(path: Path, start: float, folder: Path) -> Path:
+    """A name for a saved clip that doesn't overwrite an existing file."""
+    m, s = divmod(int(start), 60)
+    h, m = divmod(m, 60)
+    stamp = f"{h}-{m:02d}-{s:02d}" if h else f"{m}-{s:02d}"
+    out = folder / f"{path.stem}_at_{stamp}{path.suffix}"
+    n = 2
+    while out.exists():
+        out = folder / f"{path.stem}_at_{stamp}_{n}{path.suffix}"
+        n += 1
+    return out
+
+
+def save_clip(path: Path, start: float, end: float, out: Path, exact: bool = False) -> Path:
+    """Save part of a video. Fast mode copies the stream, so it may start a little early;
+    exact mode re-encodes without audio, which is slower but cuts at the right frame."""
+    if end <= start:
+        raise VideoError("the end time must be after the start time")
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-n", "-ss", f"{start:g}", "-i", str(path), "-t", f"{end - start:g}"]
+    cmd += ["-an"] if exact else ["-c", "copy"]
+    # A bare relative name like "-a.mp4" would be read as an option, so anchor it.
+    cmd.append(str(out) if out.is_absolute() else f"./{out}")
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+        out.unlink(missing_ok=True)
+        lines = r.stderr.strip().splitlines()
+        raise VideoError(lines[-1] if lines else "ffmpeg saved nothing; the time may be past the end of the video")
+    return out

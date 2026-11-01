@@ -23,7 +23,7 @@ search> person walking near the gate at night
     2. cam2/2026-10-20_2300.mp4  (at 3:12, strong match, 0.71)
     3. cam1/2026-10-21_2300.mp4  (at 41:05, possible match, 0.68)
 
-  Type a number (1-3) to see its full path and a command to save that clip, or type a new search.
+  Type a number (1-3) to see its full path, "save <number>" to save that clip, or type a new search.
 ```
 <sub>Illustrative output. The match comes from what happens on screen; the file names say nothing about it.</sub>
 
@@ -48,13 +48,14 @@ and settings. You then describe the
 moment you need, such as "forklift near the loading dock", "dog chasing bubbles" or "crowd waving glow
 sticks at a concert". You get the videos where that happens, ranked, each with the exact moment.
 
-- **Terminal-first.** Built for SSH sessions. On a headless machine, picking a result prints the
-  file path, the time range, and ready-to-run `ffmpeg` commands that save just that clip, so you
-  can usually copy a few MB instead of the whole recording.
+- **Terminal-first.** Built for SSH sessions. On a headless machine, picking a result shows the
+  file path and time range, and `save` writes just that clip, so you can usually copy a few MB
+  instead of the whole recording.
 - **Works with read-only footage.** If the folder can't be written to, the index is kept elsewhere.
 - **Handles long recordings.** One file can return several separate moments, and indexing saves
-  progress every 30 minutes of footage. Run it inside `tmux` or `screen` over SSH: a dropped session
-  stops indexing, and the next run continues from the last save.
+  progress every 30 minutes of footage.
+- **Keeps going when you disconnect.** `video-grep index --background` carries on after your SSH
+  session ends, and you can search whatever has finished while it runs.
 - **Searches the content, not the file names.** Describe actions, activities, scenes or objects in
   plain English. No tags, captions, metadata or manual labelling needed.
 - **Local and private.** After a one-time model download, everything runs offline on the machine.
@@ -81,7 +82,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -e .
 
-video-grep /path/to/videos
+video-grep doctor            # check this machine is ready
+video-grep /path/to/videos   # index the folder, then search it
 ```
 
 **On Linux without an NVIDIA GPU**, install the CPU build of PyTorch first to avoid about 2.7 GB of
@@ -113,30 +115,90 @@ the first run needs `--model-size`, so a large download never starts unasked.
 
 ## Usage
 
+### Interactive search
+
 ```bash
-video-grep FOLDER                       # index (if needed), then search interactively
-video-grep FOLDER --model-size small    # use another size for this run (each keeps its own index)
-video-grep FOLDER --no-open             # never launch a player (automatic over SSH / no display)
-video-grep FOLDER --reindex             # rebuild the index from scratch
-video-grep FOLDER -k 10                 # show up to 10 results
-video-grep FOLDER --per-video 1         # one moment per video (default: up to 3)
-video-grep FOLDER --min-score 0.62      # show less certain results too
-video-grep FOLDER --index-dir /some/dir # keep the index outside the video folder
-video-grep FOLDER --retry-failed        # try again on videos that could not be read
-video-grep FOLDER --prune               # drop index data for missing videos, even if many are gone
+video-grep FOLDER
 ```
 
-Picking a result on a headless machine:
+This indexes anything new, then gives you a `search>` prompt:
+
+| Type | What happens |
+|---|---|
+| anything else | Searches for it |
+| a result number | Opens the video at that moment, or shows its path on a headless machine |
+| `save 2` | Saves that moment as a clip, usually in a few seconds |
+| `save 2 exact` | Saves a precise cut: slower, and without audio |
+| `q` | Quits |
+
+The up arrow brings back earlier searches. On a headless machine it looks like this:
 
 ```
 search> 1
   File:   /data/footage/cam2/2026-10-21_2300.mp4
   Moment: 14:36 - 14:42
-  Save just this part, fast (the cut may start a little early):
-    ffmpeg -ss 876 -i /data/footage/cam2/2026-10-21_2300.mp4 -t 6 -c copy ./2026-10-21_2300_at_14-36.mp4
-  Exact cut, slower:
-    ffmpeg -ss 876 -i /data/footage/cam2/2026-10-21_2300.mp4 -t 6 -an ./2026-10-21_2300_at_14-36.mp4
+  Type "save 1" to save just this part, or "save 1 exact" for a precise cut.
+
+search> save 1
+  Saved /home/you/2026-10-21_2300_at_14-36.mp4 (4.2 MB)
 ```
+
+### Other commands
+
+```bash
+video-grep index FOLDER                # build or update the index, then exit
+video-grep index FOLDER --background   # keep indexing after you disconnect
+video-grep search FOLDER "dog at gate" # one search, then exit
+video-grep clip VIDEO --start 14:36    # save 6 seconds from that time (or --end 14:50)
+video-grep status FOLDER               # what's indexed, waiting or failed
+video-grep doctor                      # check Python, ffmpeg, GPU, RAM, disk and models
+```
+
+`search` behaves like `grep`, so it works in scripts: results go to stdout, and it exits with 0 if
+something matched, 1 if nothing did, and 2 on an error. It never indexes; it tells you if videos
+are waiting.
+
+### Long indexing over SSH
+
+```bash
+video-grep index /data/footage --background
+video-grep status /data/footage     # check on it, even after reconnecting
+```
+
+The job keeps running if your connection drops. You can search what's finished while it runs, and
+`kill` stops it without losing finished work. Before indexing starts you see the footage length and
+the disk space the index needs; the time left appears once the first clips are done.
+
+### Narrowing a search
+
+These work with both the shell and `search`:
+
+```bash
+video-grep FOLDER --path cam2                # one subfolder, or a pattern like "*.mp4"
+video-grep FOLDER --after 2026-10-01 --before 2026-10-21
+video-grep FOLDER -k 10                      # up to 10 results (default 5)
+video-grep FOLDER --per-video 1              # one moment per video (default: up to 3)
+video-grep FOLDER --min-score 0.62           # show less certain results too
+```
+
+Dates use each file's modified time, which usually matches the recording time but changes if a
+file is edited, and may change when it's copied.
+
+### Other options
+
+```bash
+video-grep FOLDER --model-size small    # use another size for this run (each keeps its own index)
+video-grep FOLDER --no-open             # never launch a player (automatic over SSH / no display)
+video-grep FOLDER --out-dir ~/clips     # where `save` puts clips
+video-grep FOLDER --index-dir /some/dir # keep the index outside the video folder
+video-grep FOLDER --reindex             # rebuild the index from scratch
+video-grep FOLDER --retry-failed        # try again on videos that could not be read
+video-grep FOLDER --prune               # drop index data for missing videos, even if many are gone
+```
+
+A folder really named after a command needs a path: `video-grep ./index`.
+
+### Reading the results
 
 Each result shows how close the match is:
 

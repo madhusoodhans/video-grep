@@ -244,7 +244,7 @@ def ensure_model(requested: str | None) -> ModelSize:
         sys.exit("No model chosen yet. Run this once in a terminal, or pass "
                  "--model-size high, medium or small.")
     if not size.is_downloaded():
-        print(f"\nDownloading the {size.title} model (~{fmt_mb(size.approx_mb)}) to {size.dir}")
+        print(f"\nDownloading the {size.title} model (~{fmt_mb(size.approx_mb)}) to {size.dir}", file=sys.stderr)
         try:
             download(size)
         except KeyboardInterrupt:
@@ -252,7 +252,7 @@ def ensure_model(requested: str | None) -> ModelSize:
         except (OSError, http.client.HTTPException, DownloadError) as e:
             sys.exit(f"\n\nCould not download the model: {e}\n"
                      f"Check your connection to {HF} and run again; it resumes where it stopped.")
-        print("Download complete.\n")
+        print("Download complete.\n", file=sys.stderr)
     if not saved:
         save_size(size.key)
     return size
