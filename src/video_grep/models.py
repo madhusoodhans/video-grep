@@ -51,7 +51,7 @@ SIZES = {
     s.key: s for s in [
         ModelSize("high", "High", "best quality, fastest (uses your GPU)",
                   "google/embeddinggemma-2", ("*",), "torch", 1520),
-        ModelSize("medium", "Medium", "same quality as High, but indexing is several times slower (CPU)",
+        ModelSize("medium", "Medium", "nearly the same as High, but indexing is several times slower (CPU)",
                   ONNX_REPO, ONNX_COMMON + ("onnx/vision_encoder_quantized.onnx*", "onnx/model_quantized.onnx*"),
                   "onnx", 550, "_quantized"),
         ModelSize("small", "Small", "slightly lower quality, slowest indexing (CPU)",

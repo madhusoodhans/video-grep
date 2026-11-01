@@ -1,7 +1,7 @@
 # video-grep
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)
 ![Local](https://img.shields.io/badge/runs-100%25%20local-success)
 ![Terminal](https://img.shields.io/badge/interface-terminal%20%2F%20SSH-black?logo=gnubash&logoColor=white)
@@ -48,23 +48,26 @@ and settings. You then describe the
 moment you need, such as "forklift near the loading dock", "dog chasing bubbles" or "crowd waving glow
 sticks at a concert". You get the videos where that happens, ranked, each with the exact moment.
 
-- **Terminal-first.** Works fully over SSH. On a headless machine, picking a result prints the
+- **Terminal-first.** Built for SSH sessions. On a headless machine, picking a result prints the
   file path, the time range, and a ready-to-run `ffmpeg` command that saves just that clip, so you
-  copy a few MB instead of the whole recording.
+  can usually copy a few MB instead of the whole recording. Run long indexing inside `tmux` or
+  `screen`: a dropped SSH session stops it.
 - **Searches the content, not the file names.** Describe actions, activities, scenes or objects in
   plain English. No tags, captions, metadata or manual labelling needed.
 - **Local and private.** After a one-time model download, everything runs offline on the machine.
   No video, frame or query leaves it.
 - **Incremental.** Re-running only processes new or changed videos.
-- **Cross-platform.** macOS and Linux, GPU if available, CPU otherwise.
+- **Built for macOS and Linux.** Uses a GPU if available, CPU otherwise. So far it has only been
+  tested on macOS.
 - **Choose your footprint.** Three model sizes, from 1.5 GB down to 320 MB.
 
 On a desktop, picking a result opens the video at the matching moment instead
-(QuickTime on macOS, the default player on Linux).
+in QuickTime on macOS. On Linux it opens in the default player and you skip to the time shown.
 
 ## Quick start
 
-Requires Python 3.10+ and ffmpeg.
+Requires ffmpeg and Python 3.12, 3.13 or 3.14 (not 3.14.1). Check with `python3 --version`: Ubuntu
+22.04, Debian 12 and JetPack 6 ship older versions, so you need to install a newer Python there first.
 
 ```bash
 # macOS: brew install python ffmpeg      Ubuntu/Debian: sudo apt install python3-venv ffmpeg
@@ -84,14 +87,15 @@ progress bar, then the folder is indexed:
 Choose a model size to download (needed once):
 
   1. High    ~ 1.5 GB   best quality, fastest (uses your GPU)  (recommended)
-  2. Medium  ~ 550 MB   same quality as High, but indexing is several times slower (CPU)
+  2. Medium  ~ 550 MB   nearly the same as High, but indexing is several times slower (CPU)
   3. Small   ~ 320 MB   slightly lower quality, slowest indexing (CPU)
 
   Downloading |██████████████                |  47%  712M/1.42G  31.2MB/s, ~00:23 left
   Indexing    |█████████████▊                |  46%  01:24 elapsed, ~01:35 left  video 11/26: clip_15.mov
 ```
 
-Indexing progress is saved after every video, so Ctrl+C is safe; the next run continues.
+Indexing progress is saved after every video, so Ctrl+C is safe: the next run continues, restarting
+only the video that was in progress.
 
 ## Usage
 
@@ -113,22 +117,32 @@ search> 1
     ffmpeg -ss 876 -i /data/footage/cam2/2026-10-21_2300.mp4 -t 6 -c copy 2026-10-21_2300_at_14-36.mp4
 ```
 
-Results below a similarity of 0.62 are hidden. If nothing passes, you get
-`No matches found`, not a list of guesses.
+Results below a similarity of 0.62 are hidden, and if nothing passes you get `No matches found`.
+This filter is weak: **a search for something that isn't in your footage can still return results,
+so check a match before relying on it.** See [Limitations](#limitations).
 
 ## Model sizes
 
 All three are [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2); only the format
-and precision differ. Only the vision and text parts are downloaded; audio is never used.
+and precision differ. Audio is never used. Medium and Small download only the vision and text parts;
+High's single weights file also contains the unused audio part (about 600 MB of its download).
 
-| Size | Download | Runs on | Indexing speed* | Quality vs High** |
-|---|---|---|---|---|
-| **High** (default) | ~1.5 GB | GPU (Apple Metal / NVIDIA CUDA), CPU fallback | ~6x faster than real time | reference |
-| Medium (ONNX 8-bit) | ~550 MB | CPU, or NVIDIA via `onnxruntime-gpu` | ~real time | ~99.9% |
-| Small (ONNX 4-bit) | ~320 MB | CPU, or NVIDIA via `onnxruntime-gpu` | ~2.5x slower than real time | ~98% |
+| Size | Download | Runs on | Indexing speed* | Peak RAM | Embedding similarity to High** |
+|---|---|---|---|---|---|
+| **High** on GPU (default) | ~1.5 GB | Apple Metal / NVIDIA CUDA | ~6x faster than real time | not measured | reference |
+| High on CPU | ~1.5 GB | CPU fallback | ~1.5x faster than real time | ~7.3 GB | reference |
+| Medium (ONNX 8-bit) | ~550 MB | CPU, or NVIDIA via `onnxruntime-gpu` | ~real time | not measured | ~99.9% |
+| Small (ONNX 4-bit) | ~320 MB | CPU, or NVIDIA via `onnxruntime-gpu` | ~2.5x slower than real time | ~3.3 GB | ~98% |
 
-\* Measured on an Apple M5 MacBook. "6x faster than real time" means 1 hour of footage indexes in ~10 minutes.
-\*\* Cosine similarity of embeddings against High on sample clips and queries.
+\* Measured on an Apple M5 MacBook with low-resolution test clips. High-resolution footage takes
+longer to decode, and slower hardware will be much slower. "6x faster than real time" means 1 hour of
+footage indexes in ~10 minutes.
+\*\* Cosine similarity of embeddings on a few sample clips and queries. This is not the same as search
+accuracy, which has only been measured for High.
+
+The download is only part of the disk use. The Python packages take about 1 GB on macOS, and on Linux
+the default `torch` install also pulls in NVIDIA packages (roughly 2.7 GB), even on a machine without
+a GPU.
 
 Models are stored in `~/.cache/video-grep/models/` (override with `VIDEO_GREP_HOME`).
 
@@ -137,13 +151,14 @@ Models are stored in `~/.cache/video-grep/models/` (override with `VIDEO_GREP_HO
 1. Each video is decoded with ffmpeg into 6-second clips, 8 frames per clip.
 2. Each clip is embedded with EmbeddingGemma 2, a multimodal model that places video and text
    in the same vector space.
-3. Vectors are stored next to the footage in `FOLDER/.video-grep/<size>/`, about 10 KB per minute
+3. Vectors are stored next to the footage in `FOLDER/.video-grep/<size>/`, about 17 KB per minute
    of video.
 4. A query is embedded the same way and compared to every clip (cosine similarity). Each video is
    ranked by its best clip, which also gives the timestamp.
 
-Search is a brute-force dot product: ~25 ms for 30 videos on the test machine, comfortably
-fast for thousands of videos.
+Search is a brute-force dot product: ~25 ms for 30 videos on the test machine, and about 0.15 s for
+1.4 million clips in a synthetic test. Memory is the larger limit, because all vectors are loaded
+into RAM: about 44 MB for every 24 hours of footage indexed.
 
 ## Tested on
 
@@ -152,8 +167,8 @@ fast for thousands of videos.
 | Device | Apple MacBook, M5, 24 GB RAM |
 | OS | macOS 27.0 |
 | Python | 3.12.4 |
-| Model sizes | High (GPU, Metal), Medium and Small (CPU) |
-| Test set | 29 freely licensed clips (5–120 s) from Wikimedia Commons, 34 hand-labelled queries |
+| Model sizes | High (GPU, Metal) fully evaluated; Small and Medium checked on sample clips only |
+| Test set | 29 freely licensed clips (6–73 s) from Wikimedia Commons, 34 hand-labelled queries |
 | Result (High) | right video ranked first for 97% of queries, top 5 for 100% |
 
 **Not yet tested:** Linux (x86 or ARM), NVIDIA GPUs (`torch` CUDA or `onnxruntime-gpu`),
@@ -168,11 +183,21 @@ folders with thousands of videos. Reports are welcome.
   minutes ("the car that parked and left later") are not understood as a whole.
 - **Generic concepts, not specific identities.** It finds "a red car", "a toddler on a bed", not
   "my car" or a particular person.
-- **The match cut-off is rough.** 0.62 was tuned on a small, easy test set. Real footage, especially
-  many near-identical clips like fixed CCTV angles, may need a different value.
-- **The first index is the slow part.** Fast on a GPU, but Medium and Small on a CPU take roughly
-  as long as the footage itself, or longer. CPU-only machines and small boards will be slow.
-- **Memory.** Expect a few GB of RAM while indexing (about 3.3 GB observed for Small on CPU).
+- **False matches happen.** The 0.62 cut-off doesn't reliably reject searches for things that aren't
+  in your footage: in a test on 29 varied clips, most such queries still returned results. The 97%
+  figure above measures whether the right video ranks first when it exists, not whether the tool can
+  tell that something is absent. Don't treat a result, or its absence, as proof that an event did or
+  didn't happen.
+- **One moment per video.** Each file returns only its single best moment, so a long recording with
+  several matching events shows just one of them.
+- **Long recordings are not a good fit yet.** A video is saved only when it finishes, so stopping
+  or losing the session partway through a long file restarts that file.
+- **The index must live inside the video folder,** so read-only folders don't work yet.
+- **Some file types are skipped without warning,** including `.ts`, `.mpg`, `.flv` and `.dav`.
+- **The first index is the slow part.** Fast on a GPU, but on a CPU it can take as long as the
+  footage itself, or longer. CPU-only machines and small boards will be slow.
+- **Memory.** High on CPU peaked at about 7.3 GB of RAM and Small at about 3.3 GB, so High may not
+  fit on small boards. The first-run menu recommends High without checking for a GPU or RAM.
 - **Index updates at startup only.** Videos added while the search prompt is open are picked up on
   the next run.
 - **One-time internet access** is needed to download the model. Everything after that is offline.
