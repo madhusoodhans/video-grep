@@ -99,7 +99,7 @@ def has_gpu() -> bool:
 
 
 def ram_gb() -> float:
-    return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1e9
+    return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 2**30
 
 
 def recommended_size(gpu: bool, ram: float) -> str:

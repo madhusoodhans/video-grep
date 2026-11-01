@@ -149,7 +149,7 @@ search> save 1
 video-grep index FOLDER                # build or update the index, then exit
 video-grep index FOLDER --background   # keep indexing after you disconnect
 video-grep search FOLDER "dog at gate" # one search, then exit
-video-grep clip VIDEO --start 14:36    # save 6 seconds from that time (or --end 14:50)
+video-grep clip VIDEO --start 14:36    # save 6 seconds from that time; also --end, -o and --exact
 video-grep status FOLDER               # what's indexed, waiting or failed
 video-grep doctor                      # check Python, ffmpeg, GPU, RAM, disk and models
 ```
@@ -231,6 +231,9 @@ footage indexes in ~10 minutes.
 \*\* Cosine similarity of embeddings on a few sample clips and queries. This is not the same as search
 accuracy, which has only been measured for High.
 
+To use `onnxruntime-gpu`, it has to replace `onnxruntime`, which is installed by default; the two
+can't be installed together. This hasn't been tested yet.
+
 The download is only part of the disk use. The Python packages take about 1 GB on macOS, and on Linux
 the default `torch` install also pulls in NVIDIA packages (roughly 2.7 GB), even on a machine without
 a GPU.
@@ -301,7 +304,7 @@ run time, not stored in this repo; licenses and authors are recorded in `ground_
 
 ```bash
 python scripts/download_testdata.py ../video-grep-testdata
-echo q | video-grep ../video-grep-testdata       # build the index
+video-grep index ../video-grep-testdata --model-size high
 python scripts/evaluate.py ../video-grep-testdata
 ```
 
